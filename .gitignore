@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 実行時に生成されるもの
+config.yaml
+*.db
+*.db-wal
+*.db-shm
+data/
