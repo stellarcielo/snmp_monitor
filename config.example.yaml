@@ -1,0 +1,64 @@
+# SNMP Monitor 設定ファイルのサンプル
+# config.yaml にコピーして使ってください。
+#   cp config.example.yaml config.yaml
+
+server:
+  host: 127.0.0.1   # 外部からアクセスさせる場合は 0.0.0.0
+  port: 8080
+
+polling:
+  interval_seconds: 30        # ポーリング間隔 (最小 5 秒)
+  max_concurrent_devices: 16  # 同時にポーリングする最大台数
+  resource_every_n_polls: 1   # CPU/メモリ/ディスクを何回に 1 回取得するか
+  inventory_every_n_polls: 10 # ポート構成を何回に 1 回取り直すか
+
+storage:
+  path: data/snmp_monitor.db
+  raw_retention_hours: 48        # 生データの保持時間
+  rollup_5m_retention_days: 30   # 5 分平均の保持日数
+  rollup_1h_retention_days: 400  # 1 時間平均の保持日数
+  rollup_interval_seconds: 300   # 集約処理の実行間隔
+
+devices:
+  # --- SNMP v2c の例 -------------------------------------------------
+  - id: gateway
+    name: 拠点ルータ
+    host: 192.168.1.1
+    port: 161
+    timeout: 3.0
+    retries: 1
+    tags: [gateway]
+    snmp:
+      version: "2c"
+      # 環境変数から読み込むこともできます: ${SNMP_COMMUNITY}
+      community: public
+
+  # --- SNMP v3 (authPriv) の例 ---------------------------------------
+  - id: switch-1f
+    name: 1F スイッチ
+    host: 192.168.1.10
+    tags: [switch]
+    snmp:
+      version: "3"
+      username: monitor
+      auth_protocol: sha       # none / md5 / sha / sha224 / sha256 / sha384 / sha512
+      auth_key: ${SNMP_AUTH_KEY}
+      priv_protocol: aes       # none / des / 3des / aes / aes128 / aes192 / aes256
+      priv_key: ${SNMP_PRIV_KEY}
+      # context_name: ""       # 必要な場合のみ
+
+  # --- 監視するポートを絞り込む例 ------------------------------------
+  - id: ap-lounge
+    name: ラウンジ AP
+    host: 192.168.1.30
+    tags: [ap]
+    interface_exclude: "^(lo|docker|veth)"   # 正規表現にマッチするポートを除外
+    snmp:
+      version: "2c"
+      community: ${SNMP_COMMUNITY:-public}
+
+  # 一時的に監視から外す場合は enabled: false
+  # - id: old-switch
+  #   host: 192.168.1.99
+  #   enabled: false
+  #   snmp: { version: "2c", community: public }

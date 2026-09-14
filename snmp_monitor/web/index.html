@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SNMP Monitor</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%233987e5'/><path d='M8 20c4-8 12-8 16 0' stroke='white' stroke-width='2.5' fill='none' stroke-linecap='round'/><circle cx='16' cy='22' r='2.5' fill='white'/></svg>"
+    />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">SM</div>
+          <div class="brand-text">
+            <strong>SNMP Monitor</strong>
+            <span>Network Dashboard</span>
+          </div>
+        </div>
+
+        <button class="nav-item" data-route="#/" type="button">
+          <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1" />
+            <rect x="9" y="1.5" width="5.5" height="5.5" rx="1" />
+            <rect x="1.5" y="9" width="5.5" height="5.5" rx="1" />
+            <rect x="9" y="9" width="5.5" height="5.5" rx="1" />
+          </svg>
+          ダッシュボード
+        </button>
+        <button class="nav-item" data-route="#/devices" type="button">
+          <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <rect x="1.5" y="3" width="13" height="4" rx="1" />
+            <rect x="1.5" y="9" width="13" height="4" rx="1" />
+            <circle cx="4" cy="5" r="0.8" fill="currentColor" />
+            <circle cx="4" cy="11" r="0.8" fill="currentColor" />
+          </svg>
+          デバイス
+        </button>
+        <button class="nav-item" data-route="#/events" type="button">
+          <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M8 1.8v6.4l3.4 2" stroke-linecap="round" />
+            <circle cx="8" cy="8" r="6.3" />
+          </svg>
+          イベント
+        </button>
+
+        <div class="sidebar-footer">
+          <div id="footer-status">接続中…</div>
+        </div>
+      </aside>
+
+      <div class="main">
+        <header class="topbar">
+          <h1 id="page-title">ダッシュボード</h1>
+          <div class="topbar-stats" id="topbar-stats"></div>
+        </header>
+        <main class="content" id="content">
+          <div class="empty">読み込み中…</div>
+        </main>
+      </div>
+    </div>
+
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>
