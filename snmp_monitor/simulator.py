@@ -69,7 +69,11 @@ def _gateway_profile(seed: int) -> _Profile:
             base_in_bps=24e6, base_out_bps=31e6, mac=_mac(seed, 3),
         ),
         _Port(
-            4, "lo", "", 10_000_000, if_type=24,
+            4, "eth1.100", "業務 VLAN", gbe,
+            base_in_bps=32e6, base_out_bps=48e6, mac=_mac(seed, 5),
+        ),
+        _Port(
+            5, "lo", "", 10_000_000, if_type=24,
             base_in_bps=1e5, base_out_bps=1e5, mac=_mac(seed, 4),
         ),
     ]
@@ -82,34 +86,100 @@ def _gateway_profile(seed: int) -> _Profile:
     )
 
 
-def _switch_profile(seed: int, port_count: int = 12) -> _Profile:
+def _switch_profile(seed: int, port_count: int = 12, units: int = 1) -> _Profile:
+    """Cisco 風の命名 (Gi1/0/1, Te1/1/1, Vlan100, Port-channel1) のスイッチ。
+
+    ポートマップの推定が効いているか目で確かめられるよう、物理ポート・SFP・
+    LAG・VLAN・スタックポートを一通り持たせている。
+    """
     ports: list[_Port] = []
-    for i in range(1, port_count + 1):
-        # 一部のポートは未接続 (リンクダウン) にしておく
-        linked = i % 5 != 0
-        ports.append(
-            _Port(
-                if_index=i,
-                name=f"Port {i}",
-                alias=f"Desk {i:02d}" if linked else "未使用",
-                speed_bps=1_000_000_000,
-                oper_status=1 if linked else 2,
-                base_in_bps=random.uniform(2e6, 90e6) if linked else 0.0,
-                base_out_bps=random.uniform(2e6, 70e6) if linked else 0.0,
-                mac=_mac(seed, i),
+    index = 1
+    for unit in range(1, units + 1):
+        for i in range(1, port_count + 1):
+            # 一部のポートは未接続 (リンクダウン) にしておく
+            linked = i % 5 != 0
+            ports.append(
+                _Port(
+                    if_index=index,
+                    name=f"GigabitEthernet{unit}/0/{i}",
+                    alias=f"Desk {i:02d}" if linked else "未使用",
+                    speed_bps=1_000_000_000,
+                    oper_status=1 if linked else 2,
+                    base_in_bps=random.uniform(2e6, 90e6) if linked else 0.0,
+                    base_out_bps=random.uniform(2e6, 70e6) if linked else 0.0,
+                    mac=_mac(seed, index),
+                )
             )
-        )
+            index += 1
+        for i in (1, 2):
+            ports.append(
+                _Port(
+                    if_index=index,
+                    name=f"TenGigabitEthernet{unit}/1/{i}",
+                    alias="Uplink" if i == 1 else "予備",
+                    speed_bps=10_000_000_000,
+                    oper_status=1 if i == 1 else 2,
+                    base_in_bps=420e6 if i == 1 else 0.0,
+                    base_out_bps=380e6 if i == 1 else 0.0,
+                    mac=_mac(seed, index),
+                )
+            )
+            index += 1
+
     ports.append(
         _Port(
-            if_index=port_count + 1,
-            name=f"Port {port_count + 1} (SFP+)",
-            alias="Uplink",
-            speed_bps=10_000_000_000,
-            base_in_bps=420e6,
-            base_out_bps=380e6,
-            mac=_mac(seed, port_count + 1),
+            if_index=index,
+            name="Port-channel1",
+            alias="コア接続",
+            speed_bps=20_000_000_000,
+            if_type=161,
+            base_in_bps=260e6,
+            base_out_bps=240e6,
+            mac=_mac(seed, index),
         )
     )
+    index += 1
+    for vlan_id, alias in ((1, "管理"), (100, "業務"), (200, "ゲスト")):
+        ports.append(
+            _Port(
+                if_index=index,
+                name=f"Vlan{vlan_id}",
+                alias=alias,
+                speed_bps=1_000_000_000,
+                if_type=136,
+                base_in_bps=random.uniform(5e6, 60e6),
+                base_out_bps=random.uniform(5e6, 60e6),
+                mac=_mac(seed, index),
+            )
+        )
+        index += 1
+    if units > 1:
+        for unit in range(1, units + 1):
+            ports.append(
+                _Port(
+                    if_index=index,
+                    name=f"StackPort{unit}",
+                    alias="スタック相互接続",
+                    speed_bps=40_000_000_000,
+                    base_in_bps=180e6,
+                    base_out_bps=180e6,
+                    mac=_mac(seed, index),
+                )
+            )
+            index += 1
+    ports.append(
+        _Port(
+            if_index=index,
+            name="Loopback0",
+            alias="",
+            speed_bps=10_000_000,
+            if_type=24,
+            base_in_bps=1e5,
+            base_out_bps=1e5,
+            mac=_mac(seed, index),
+        )
+    )
+
     return _Profile(
         sys_descr="Demo Switch OS 5.0.9 (simulated)",
         ports=ports,
@@ -119,6 +189,11 @@ def _switch_profile(seed: int, port_count: int = 12) -> _Profile:
         disk_total=2 * 1024**3,
         flaky_port_index=3,
     )
+
+
+def _stack_switch_profile(seed: int) -> _Profile:
+    """2 台構成のスタックスイッチ。"""
+    return _switch_profile(seed, port_count=24, units=2)
 
 
 def _ap_profile(seed: int) -> _Profile:
@@ -147,8 +222,12 @@ def _ap_profile(seed: int) -> _Profile:
     )
 
 
+#: デモで「稀に無応答になる」動きを再現する確率 (テストでは 0 にする)
+UNREACHABLE_PROBABILITY = 0.01
+
 PROFILE_BUILDERS = {
     "gateway": _gateway_profile,
+    "stack": _stack_switch_profile,
     "switch": _switch_profile,
     "ap": _ap_profile,
 }
@@ -243,7 +322,7 @@ class SimulatedSnmpClient:
                 if port.if_index == flaky:
                     port.oper_status = 2 if port.oper_status == 1 else 1
         # ごくまれにデバイスごと無応答にする
-        if rng.random() < 0.01:
+        if rng.random() < UNREACHABLE_PROBABILITY:
             state.unreachable_until = now + rng.uniform(20, 60)
         return now
 
@@ -395,9 +474,9 @@ DEMO_DEVICES = [
     ),
     DeviceConfig(
         id="demo-switch-2",
-        name="Demo Switch 2F",
+        name="Demo Switch 2F (スタック)",
         host="192.0.2.12",
-        tags=["switch", "demo"],
+        tags=["stack", "demo"],
         snmp=SnmpV2cConfig(community="public"),
     ),
     DeviceConfig(

@@ -57,6 +57,28 @@ devices:
       version: "2c"
       community: ${SNMP_COMMUNITY:-public}
 
+  # --- ポートマップの表示を調整する例 --------------------------------
+  # 区分 (物理 / VLAN / スタックなど) と物理配置は ifName から自動推定します。
+  # 推定が実機と合わない機種だけ port_layout で上書きしてください。
+  - id: switch-2f
+    name: 2F スイッチ
+    host: 192.168.1.20
+    snmp:
+      version: "2c"
+      community: ${SNMP_COMMUNITY:-public}
+    port_layout:
+      rows: 2              # 物理パネルの段数 (未指定ならポート数から自動判定)
+      order: odd-top       # odd-top: 奇数を上段 / sequential: 並び順どおり
+      groups:              # 区画分け (未指定なら ifName から自動推定)
+        - name: 本体
+          ports: "1-24"
+        - name: SFP
+          ports: "25-28"
+          rows: 1
+      categories:          # 区分の強制指定 (ifIndex または ifName を指定)
+        "49": stack
+        Vlan1: vlan
+
   # 一時的に監視から外す場合は enabled: false
   # - id: old-switch
   #   host: 192.168.1.99

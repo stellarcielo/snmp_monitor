@@ -12,7 +12,9 @@ SNMP でネットワーク機器を定期的にポーリングし、UniFi の We
 
 - **インターフェースのトラフィック** — ifHCInOctets / ifHCOutOctets (64bit) から bps を算出。
   64bit カウンタ非対応の機器では自動的に 32bit カウンタへフォールバックします
-- **ポート状態** — リンク状態・リンク速度・エラー/破棄カウンタを UniFi 風のポートグリッドで表示
+- **ポートマップ** — 物理ポート / SFP / LAG / VLAN / スタックポート / 仮想インターフェースを
+  区分ごとに分けて表示。物理ポートは実機の並びに合わせて奇数を上段・偶数を下段に配置し、
+  スタック構成はユニットごとにパネルを分けます
 - **システムリソース** — CPU / メモリ / ディスクを HOST-RESOURCES-MIB から取得。
   非対応機器では UCD-SNMP-MIB にフォールバックします
 - **死活監視とイベント** — 応答なし・復旧・リンクアップ/ダウン・機器の再起動を検出して記録
@@ -110,6 +112,57 @@ devices:
 | `--demo` | 実機を使わずダミーデータで起動 |
 | `--log-level` | `debug` / `info` / `warning` / `error` |
 
+## ポートマップ
+
+デバイス詳細のポート表示は、インターフェースを区分ごとに分けて描画します。
+
+| 区分 | 内容 |
+| --- | --- |
+| 物理ポート / アップリンク・SFP | 実機のフェイスプレートに見立てたパネル。奇数が上段、偶数が下段 |
+| LAG / ポートチャネル | `Port-channel1`、`bond0`、`ae0` など |
+| VLAN インターフェース | `Vlan100`、`irb`、`Gi0/1.100` などのサブインターフェース |
+| スタックポート | `StackPort1`、`vcp-0/0/0` など |
+| 仮想インターフェース | `lo`、`Loopback0`、`tun0`、`docker0` など |
+
+区分と配置は `ifType` と `ifName` から推定します
+(`GigabitEthernet1/0/24` → ユニット 1・ポート 24)。次の命名に対応しています。
+
+- Cisco — `Gi1/0/24`、`TenGigabitEthernet1/1/1`、`Port-channel1`、`Vlan100`、`StackPort1`
+- Juniper — `ge-0/0/12`、`xe-0/1/0`、`ae0`、`vcp-0/0/0`
+- Arista / Nexus — `Ethernet1/24`
+- Linux — `eth0`、`bond0`、`eth0.100`、`docker0`
+- 汎用 — `Port 12`
+
+スタック構成やモジュラー機は先頭の番号 (`Gi**2**/0/1`) でパネルを分けます。
+番号が飛んでいるポートは、実機と対応が取れるよう空きスロットとして残ります。
+アップリンクは名前 (`sfp` / `Te` / `xe-` など) のほか、
+「その機器の中で最速かつ少数派の速度」であれば SFP 区画に分けます
+(全ポートが 10G の機器を誤判定しないため)。
+
+### 推定が合わないとき
+
+機種によっては実機のパネルと並びが異なることがあります。その場合は
+`config.yaml` の `port_layout` で上書きしてください。
+
+```yaml
+devices:
+  - id: switch-2f
+    host: 192.168.1.20
+    snmp: { version: "2c", community: public }
+    port_layout:
+      rows: 2              # 物理パネルの段数
+      order: odd-top       # odd-top: 奇数を上段 / sequential: 並び順どおり
+      groups:              # 区画分け (未指定なら自動推定)
+        - name: 本体
+          ports: "1-24"
+        - name: SFP
+          ports: "25-28"
+          rows: 1
+      categories:          # 区分の強制指定 (ifIndex または ifName)
+        "49": stack
+        Vlan1: vlan
+```
+
 ## 監視対象側 (snmpd) の設定例
 
 Linux サーバを net-snmp で監視する場合の `/etc/snmp/snmpd.conf` の例です。
@@ -164,6 +217,7 @@ SNMP エージェント → Poller → SQLite (raw → 5m → 1h)
 | GET | `/api/devices` | デバイス一覧 |
 | GET | `/api/devices/{id}` | デバイス詳細 (ポート・ストレージを含む) |
 | GET | `/api/devices/{id}/interfaces` | ポート一覧 |
+| GET | `/api/devices/{id}/portmap` | 区分と物理配置の推定結果 |
 | GET | `/api/devices/{id}/history?range=1h` | CPU/メモリと合計トラフィックの履歴 |
 | GET | `/api/devices/{id}/interfaces/{ifIndex}/history?range=1h` | ポート単位の履歴 |
 | GET | `/api/sparklines?range=15m` | 全デバイスの短い時系列 (一覧表示用) |
@@ -187,6 +241,7 @@ ruff check .    # 静的解析
 テストは以下をカバーしています。
 
 - 設定ファイルの解析とバリデーション
+- ポートの区分判定と物理配置の推定 (Cisco / Juniper / Arista / Linux の命名)
 - カウンタの折り返し・機器再起動を含むレート計算
 - SQLite への保存、集約 (ロールアップ)、保持期間による削除
 - イベント検出 (リンクダウン、応答なし、再起動)
