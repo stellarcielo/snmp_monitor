@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 # ${ENV_VAR} / ${ENV_VAR:-default} を環境変数で置換するためのパターン
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
@@ -88,6 +88,79 @@ class SnmpV3Config(BaseModel):
 SnmpAuthConfig = SnmpV2cConfig | SnmpV3Config
 
 
+#: ポートの区分。portmap.py の定数と対応する (整合性はテストで確認している)
+PortCategory = Literal[
+    "physical", "uplink", "lag", "vlan", "stack", "virtual", "other"
+]
+
+
+def _parse_port_ranges(spec: str) -> list[tuple[int, int]]:
+    """``"1-24,49"`` のような指定を範囲のリストに変換する。"""
+    ranges: list[tuple[int, int]] = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start, _, end = part.partition("-")
+            try:
+                low, high = int(start), int(end)
+            except ValueError as exc:
+                raise ValueError(f"ポート範囲の指定が不正です: {part!r}") from exc
+            if low > high:
+                low, high = high, low
+            ranges.append((low, high))
+        else:
+            try:
+                value = int(part)
+            except ValueError as exc:
+                raise ValueError(f"ポート番号の指定が不正です: {part!r}") from exc
+            ranges.append((value, value))
+    if not ranges:
+        raise ValueError("ports が空です")
+    return ranges
+
+
+class PortGroupConfig(BaseModel):
+    """物理パネルの 1 区画を明示的に指定する。"""
+
+    name: str
+    #: "1-24" や "25-28,49" のようなポート番号の指定
+    ports: str
+    rows: int | None = Field(default=None, ge=1, le=4)
+    order: Literal["odd-top", "sequential"] = "odd-top"
+
+    _ranges: list[tuple[int, int]] = PrivateAttr(default_factory=list)
+
+    def model_post_init(self, _context: Any) -> None:
+        self._ranges = _parse_port_ranges(self.ports)
+
+    def matches(self, if_index: str, port_number: int | None) -> bool:
+        """このグループに含まれるポートかどうかを判定する。
+
+        名前から読み取れるポート番号を優先し、読めない場合は ifIndex を使う。
+        """
+        value = port_number
+        if value is None:
+            try:
+                value = int(if_index)
+            except ValueError:
+                return False
+        return any(low <= value <= high for low, high in self._ranges)
+
+
+class PortLayoutConfig(BaseModel):
+    """ポートマップの推定結果を上書きするための設定。"""
+
+    #: 物理パネルの段数 (未指定ならポート数から自動判定)
+    rows: int | None = Field(default=None, ge=1, le=4)
+    order: Literal["odd-top", "sequential"] = "odd-top"
+    #: 明示的な区画分け (未指定なら ifName から推定)
+    groups: list[PortGroupConfig] = Field(default_factory=list)
+    #: ifIndex または ifName を指定して区分を強制する
+    categories: dict[str, PortCategory] = Field(default_factory=dict)
+
+
 class DeviceConfig(BaseModel):
     """監視対象デバイス 1 台分の設定。"""
 
@@ -103,6 +176,8 @@ class DeviceConfig(BaseModel):
     # 監視対象インターフェースの絞り込み (ifName / ifDescr の正規表現)
     interface_include: str | None = None
     interface_exclude: str | None = None
+    # ポートマップの自動推定を上書きしたい場合に指定する
+    port_layout: PortLayoutConfig | None = None
 
     @field_validator("id")
     @classmethod

@@ -15,6 +15,7 @@ from typing import Any
 from .config import AppConfig, DeviceConfig
 from .metrics import RateCalculator, max_plausible_rate, octets_to_bps, speed_to_bps
 from .models import DeviceSnapshot, Event, InterfaceInfo, InterfaceSample, StorageInfo
+from .portmap import PortMap, build_port_map
 from .snmp import oids
 from .snmp.client import SnmpClient, SnmpError, decode_str, format_mac
 from .storage.timeseries import TimeSeriesStore
@@ -30,6 +31,7 @@ class DeviceState:
     """ポーリング間で引き継ぐデバイスごとの状態。"""
 
     interfaces: dict[str, InterfaceInfo] = field(default_factory=dict)
+    port_map: PortMap | None = None
     poll_count: int = 0
     last_uptime_ticks: int | None = None
     last_oper_status: dict[str, int | None] = field(default_factory=dict)
@@ -111,6 +113,11 @@ class Poller:
     def interfaces(self, device_id: str) -> list[InterfaceInfo]:
         state = self._states.get(device_id)
         return list(state.interfaces.values()) if state else []
+
+    def port_map(self, device_id: str) -> PortMap | None:
+        """最後に構成を取得したときのポートマップ。"""
+        state = self._states.get(device_id)
+        return state.port_map if state else None
 
     # -- ループ ----------------------------------------------------------
     async def _device_loop(self, device: DeviceConfig) -> None:
@@ -251,7 +258,7 @@ class Poller:
             or self.config.polling.inventory_every_n_polls == 1
         )
         if need_inventory:
-            state.interfaces = await self._fetch_inventory(client, device)
+            state.interfaces, state.port_map = await self._fetch_inventory(client, device)
             snapshot.interfaces = list(state.interfaces.values())
 
         snapshot.interface_samples = await self._fetch_interface_samples(
@@ -276,7 +283,7 @@ class Poller:
 
     async def _fetch_inventory(
         self, client: Any, device: DeviceConfig
-    ) -> dict[str, InterfaceInfo]:
+    ) -> tuple[dict[str, InterfaceInfo], PortMap]:
         base = await client.get_table(oids.INTERFACE_INVENTORY_COLUMNS)
         try:
             extended = await client.get_table(oids.INTERFACE_INVENTORY_COLUMNS_X)
@@ -309,7 +316,12 @@ class Poller:
                 admin_status=row.get("admin_status"),
                 last_change=row.get("last_change"),
             )
-        return result
+
+        # 区分と物理配置はここで一度だけ決めて、以降のポーリングでは使い回す
+        port_map = build_port_map(list(result.values()), device.port_layout)
+        for info in result.values():
+            info.category = port_map.categories.get(info.if_index)
+        return result, port_map
 
     async def _fetch_interface_samples(
         self, client: Any, device: DeviceConfig, state: DeviceState, ts: float

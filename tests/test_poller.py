@@ -307,3 +307,16 @@ async def test_counter32_wrap_across_polls(store):
 
     sample = next(s for s in snapshot.interface_samples if s.if_index == "1")
     assert sample.in_bps == 1_600_000  # 2,000,000 オクテット / 10 秒 * 8
+
+
+async def test_inventory_assigns_categories_and_port_map(store):
+    state = FakeDevice()
+    poller, device = build_poller(store, state)
+    await poller.poll_once(device, ts=1000.0)
+
+    infos = poller.interfaces("fake1")
+    assert all(i.category == "physical" for i in infos)
+
+    port_map = poller.port_map("fake1")
+    assert port_map is not None
+    assert port_map.panels, "物理パネルが作られていません"

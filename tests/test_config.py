@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -145,3 +147,17 @@ def test_enabled_devices_filter():
 def test_missing_file():
     with pytest.raises(FileNotFoundError):
         load_config("/nonexistent/path/config.yaml")
+
+
+def test_example_config_is_valid(monkeypatch):
+    """同梱のサンプル設定が、そのまま読み込める状態を保っていること。"""
+    for name in ("SNMP_COMMUNITY", "SNMP_AUTH_KEY", "SNMP_PRIV_KEY"):
+        monkeypatch.setenv(name, "dummy-value")
+
+    config = load_config(Path(__file__).resolve().parents[1] / "config.example.yaml")
+
+    assert config.devices
+    layout = config.device("switch-2f").port_layout
+    assert layout is not None
+    assert [g.name for g in layout.groups] == ["本体", "SFP"]
+    assert layout.categories["49"] == "stack"

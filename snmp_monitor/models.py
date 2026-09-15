@@ -22,6 +22,8 @@ class InterfaceInfo:
     mac: str | None = None
     admin_status: int | None = None
     last_change: int | None = None
+    #: portmap.classify() が決める区分 (physical / vlan / stack など)
+    category: str | None = None
 
     @property
     def label(self) -> str:
