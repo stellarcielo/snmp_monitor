@@ -90,7 +90,7 @@ SnmpAuthConfig = SnmpV2cConfig | SnmpV3Config
 
 #: ポートの区分。portmap.py の定数と対応する (整合性はテストで確認している)
 PortCategory = Literal[
-    "physical", "uplink", "lag", "vlan", "stack", "virtual", "other"
+    "physical", "uplink", "mgmt", "lag", "vlan", "stack", "virtual", "other"
 ]
 
 

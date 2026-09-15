@@ -75,9 +75,11 @@ devices:
         - name: SFP
           ports: "25-28"
           rows: 1
-      categories:          # 区分の強制指定 (ifIndex または ifName を指定)
+      # 区分の強制指定 (ifIndex または ifName を指定)
+      # physical / uplink / mgmt / lag / vlan / stack / virtual / other
+      categories:
         "49": stack
-        Vlan1: vlan
+        Gi0/0: physical    # 管理ポートと判定されたが実際はデータポートの場合
 
   # 一時的に監視から外す場合は enabled: false
   # - id: old-switch

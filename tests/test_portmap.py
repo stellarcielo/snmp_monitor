@@ -12,6 +12,7 @@ from snmp_monitor.portmap import (
     CATEGORY_LABELS,
     CATEGORY_ORDER,
     LAG,
+    MGMT,
     PHYSICAL,
     STACK,
     UPLINK,
@@ -67,6 +68,11 @@ def names(port_map, interfaces, if_indexes):
         ("docker0", 6, VIRTUAL),
         ("veth1a2b3c", 6, VIRTUAL),
         ("tun0", 6, VIRTUAL),
+        ("mgmt0", 6, MGMT),
+        ("Management1", 6, MGMT),
+        ("Ma1", 6, MGMT),
+        ("fxp0", 6, MGMT),
+        ("me0", 6, MGMT),
         ("TenGigabitEthernet1/1/1", 6, UPLINK),
         ("xe-0/0/1", 6, UPLINK),
         ("Port 25 (SFP+)", 6, UPLINK),
@@ -342,3 +348,85 @@ def test_port_group_falls_back_to_if_index():
 def test_invalid_port_range_is_rejected(spec):
     with pytest.raises(ValueError):
         PortGroupConfig(name="g", ports=spec)
+
+
+# --- 管理ポート ---------------------------------------------------------
+def catalyst_like_interfaces(ports: int = 48, uplinks: int = 4):
+    """Gi0/0 (管理) + Gi1/0/N + Te1/1/N という Catalyst 風の構成。"""
+    interfaces = [iface(1, "Gi0/0")]
+    interfaces += [iface(10 + n, f"Gi1/0/{n}") for n in range(1, ports + 1)]
+    interfaces += [
+        iface(100 + n, f"Te1/1/{n}", speed=TEN_GBE) for n in range(1, uplinks + 1)
+    ]
+    return interfaces
+
+
+def test_isolated_port_becomes_management_port():
+    # Gi0/0 は名前だけでは管理ポートと分からないが、構成の形から判定する
+    interfaces = catalyst_like_interfaces()
+    port_map = build_port_map(interfaces)
+    assert port_map.categories["1"] == MGMT
+
+
+def test_management_port_does_not_create_its_own_panel():
+    interfaces = catalyst_like_interfaces()
+    port_map = build_port_map(interfaces)
+
+    # 「ユニット 0」のような不自然なパネルができないこと
+    assert len(port_map.panels) == 1
+    assert port_map.panels[0].name is None
+    # 管理ポートは本体の左端、SFP は右端
+    assert [s.kind for s in port_map.panels[0].sections] == ["mgmt", "main", "sfp"]
+
+
+def test_management_section_contains_only_the_management_port():
+    interfaces = catalyst_like_interfaces()
+    section = build_port_map(interfaces).panels[0].sections[0]
+    assert section.rows == [["1"]]
+
+
+def test_stack_members_are_not_mistaken_for_management_ports():
+    # 24 ポート 2 台構成では、どちらも本体なので管理ポート扱いしない
+    interfaces = [iface(n, f"GigabitEthernet1/0/{n}") for n in range(1, 25)]
+    interfaces += [iface(100 + n, f"GigabitEthernet2/0/{n}") for n in range(1, 25)]
+    port_map = build_port_map(interfaces)
+
+    assert MGMT not in set(port_map.categories.values())
+    assert len(port_map.panels) == 2
+
+
+def test_small_device_has_no_management_port():
+    # eth0-2 だけのような機器で、勝手に管理ポートを作らない
+    interfaces = [iface(n, f"eth{n}") for n in range(3)]
+    assert MGMT not in set(build_port_map(interfaces).categories.values())
+
+
+def test_two_management_ports_are_both_detected():
+    interfaces = [iface(1, "Gi0/0"), iface(2, "Gi0/1")]
+    interfaces += [iface(10 + n, f"Gi1/0/{n}") for n in range(1, 25)]
+    port_map = build_port_map(interfaces)
+    assert port_map.categories["1"] == MGMT
+    assert port_map.categories["2"] == MGMT
+
+
+def test_management_detection_can_be_overridden():
+    # 実際にはデータポートだった場合、設定で物理ポートに戻せる
+    interfaces = catalyst_like_interfaces()
+    layout = PortLayoutConfig(categories={"1": "physical"})
+    port_map = build_port_map(interfaces, layout)
+
+    assert port_map.categories["1"] == PHYSICAL
+    # 物理ポートに戻すと、別シャーシなのでパネルは分かれる
+    assert len(port_map.panels) == 2
+
+
+def test_management_detection_can_be_overridden_by_name():
+    interfaces = catalyst_like_interfaces()
+    port_map = build_port_map(interfaces, PortLayoutConfig(categories={"Gi0/0": "physical"}))
+    assert port_map.categories["1"] == PHYSICAL
+
+
+def test_named_management_port_is_detected_even_in_small_devices():
+    # 名前で分かる場合は構成の大きさに関係なく管理ポートとして扱う
+    interfaces = [iface(1, "mgmt0"), iface(2, "Ethernet1"), iface(3, "Ethernet2")]
+    assert build_port_map(interfaces).categories["1"] == MGMT

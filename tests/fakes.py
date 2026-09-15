@@ -136,6 +136,12 @@ def cisco_switch_device(port_count: int = 8, units: int = 1) -> FakeDevice:
     device = FakeDevice()
     device.ports = {}
     index = 1
+    # Catalyst の OOB 管理ポート
+    device.ports[str(index)] = {
+        "oper": 1, "in": 0, "out": 0, "errors": 0,
+        "name": "Gi0/0", "speed": 1_000_000_000, "if_type": 6,
+    }
+    index += 1
     for unit in range(1, units + 1):
         for port in range(1, port_count + 1):
             device.ports[str(index)] = {

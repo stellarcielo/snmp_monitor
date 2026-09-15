@@ -537,12 +537,25 @@ function rangeTabsHtml(active) {
 const CATEGORY_LABELS = {
   physical: "物理ポート",
   uplink: "アップリンク / SFP",
+  mgmt: "管理ポート",
   lag: "LAG / ポートチャネル",
   vlan: "VLAN インターフェース",
   stack: "スタックポート",
   virtual: "仮想インターフェース",
   other: "その他",
 };
+
+//: パネル内の区画に付ける見出し
+const SECTION_LABELS = { sfp: "SFP", mgmt: "MGMT" };
+
+//: この列数を超えるパネルは、画面幅に収まるようタイルを小さくする
+const DENSE_COLUMN_THRESHOLD = 16;
+
+function isDensePanel(panel) {
+  return panel.sections.some((section) =>
+    section.rows.some((row) => row.length > DENSE_COLUMN_THRESHOLD)
+  );
+}
 
 function portPanelsHtml(portMap, interfaces) {
   const byIndex = new Map(interfaces.map((i) => [i.if_index, i]));
@@ -555,14 +568,18 @@ function portPanelsHtml(portMap, interfaces) {
   return portMap.panels
     .map(
       (panel) => `
-      <div class="port-panel">
+      <div class="port-panel" data-dense="${isDensePanel(panel)}">
         ${panel.name ? `<div class="panel-title">${escapeHtml(panel.name)}</div>` : ""}
         <div class="panel-sections">
           ${panel.sections
             .map(
               (section) => `
             <div class="panel-section ${section.kind}">
-              ${section.kind === "sfp" ? `<div class="panel-section-label">SFP</div>` : ""}
+              ${
+                SECTION_LABELS[section.kind]
+                  ? `<div class="panel-section-label">${SECTION_LABELS[section.kind]}</div>`
+                  : ""
+              }
               <div class="port-rows">
                 ${section.rows
                   .map(

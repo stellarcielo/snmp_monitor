@@ -94,6 +94,19 @@ def _switch_profile(seed: int, port_count: int = 12, units: int = 1) -> _Profile
     """
     ports: list[_Port] = []
     index = 1
+    # OOB 管理ポート (本体とは別シャーシの名前になる)
+    ports.append(
+        _Port(
+            if_index=index,
+            name="Gi0/0",
+            alias="管理",
+            speed_bps=1_000_000_000,
+            base_in_bps=2e5,
+            base_out_bps=2e5,
+            mac=_mac(seed, index),
+        )
+    )
+    index += 1
     for unit in range(1, units + 1):
         for i in range(1, port_count + 1):
             # 一部のポートは未接続 (リンクダウン) にしておく

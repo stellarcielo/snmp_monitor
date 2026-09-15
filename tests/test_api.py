@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from snmp_monitor import simulator
 from snmp_monitor.api import RANGE_SECONDS, create_app
 from snmp_monitor.config import AppConfig, DeviceConfig, PollingConfig, StorageConfig
+from snmp_monitor.portmap import PANEL_CATEGORIES
 from snmp_monitor.simulator import DEMO_DEVICES
 
 
@@ -147,14 +148,14 @@ def test_device_detail_includes_port_map(client):
     assert port_map["panels"], "物理パネルが組み立てられていません"
     # 各インターフェースに区分が付いている
     assert all(i["category"] for i in detail["interfaces"])
-    # パネルに並ぶのは物理ポートと SFP だけ
+    # パネルに並ぶのは物理ポート・SFP・管理ポートだけ
     categories = port_map["categories"]
     for panel in port_map["panels"]:
         for section in panel["sections"]:
             for row in section["rows"]:
                 for if_index in row:
                     if if_index:
-                        assert categories[if_index] in {"physical", "uplink"}
+                        assert categories[if_index] in set(PANEL_CATEGORIES)
 
 
 def test_demo_switch_has_vlan_and_lag_sections(client):
@@ -168,7 +169,7 @@ def test_port_counts_exclude_virtual_interfaces(client):
     summary = client.get("/api/summary").json()
     gateway = next(d for d in summary["devices"] if d["id"] == "demo-gateway")
     physical = [
-        i for i in detail["interfaces"] if i["category"] in {"physical", "uplink"}
+        i for i in detail["interfaces"] if i["category"] in set(PANEL_CATEGORIES)
     ]
     # lo や VLAN サブインターフェースはポート数に含めない
     assert gateway["ports"]["total"] == len(physical)
@@ -221,12 +222,11 @@ def test_real_mode_builds_port_map(real_mode_client):
     detail = wait_for_device(real_mode_client, "sw1")
     port_map = detail["port_map"]
 
-    # 物理パネルが 2 段に組まれている
-    main_section = port_map["panels"][0]["sections"][0]
-    assert main_section["kind"] == "main"
+    # 管理ポート・本体・SFP がそれぞれ区画に分かれている
+    assert [s["kind"] for s in port_map["panels"][0]["sections"]] == ["mgmt", "main", "sfp"]
+    # 本体ポートは 2 段に組まれている
+    main_section = port_map["panels"][0]["sections"][1]
     assert len(main_section["rows"]) == 2
-    # SFP 区画が分かれている
-    assert [s["kind"] for s in port_map["panels"][0]["sections"]] == ["main", "sfp"]
 
     # 物理以外は区分ごとのセクションに分かれている
     categories = {s["category"] for s in port_map["sections"]}
@@ -237,6 +237,7 @@ def test_real_mode_assigns_categories_to_interfaces(real_mode_client):
     detail = wait_for_device(real_mode_client, "sw1")
     by_name = {i["name"]: i["category"] for i in detail["interfaces"]}
 
+    assert by_name["Gi0/0"] == "mgmt"
     assert by_name["GigabitEthernet1/0/1"] == "physical"
     assert by_name["TenGigabitEthernet1/1/1"] == "uplink"
     assert by_name["Port-channel1"] == "lag"
@@ -248,8 +249,8 @@ def test_real_mode_assigns_categories_to_interfaces(real_mode_client):
 def test_real_mode_port_counts_exclude_non_physical(real_mode_client):
     wait_for_device(real_mode_client, "sw1")
     summary = real_mode_client.get("/api/summary").json()
-    # 物理 8 本 + SFP 1 本。VLAN・LAG・スタック・ループバックは数えない
-    assert summary["devices"][0]["ports"]["total"] == 9
+    # 物理 8 本 + SFP 1 本 + 管理 1 本。VLAN・LAG・スタック・ループバックは数えない
+    assert summary["devices"][0]["ports"]["total"] == 10
 
 
 def test_real_mode_portmap_endpoint(real_mode_client):

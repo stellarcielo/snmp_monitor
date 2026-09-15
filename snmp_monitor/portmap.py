@@ -18,6 +18,7 @@ from .models import InterfaceInfo
 # --- 区分 ---------------------------------------------------------------
 PHYSICAL = "physical"
 UPLINK = "uplink"
+MGMT = "mgmt"
 LAG = "lag"
 VLAN = "vlan"
 STACK = "stack"
@@ -27,6 +28,7 @@ OTHER = "other"
 CATEGORY_LABELS = {
     PHYSICAL: "物理ポート",
     UPLINK: "アップリンク / SFP",
+    MGMT: "管理ポート",
     LAG: "LAG / ポートチャネル",
     VLAN: "VLAN インターフェース",
     STACK: "スタックポート",
@@ -35,10 +37,10 @@ CATEGORY_LABELS = {
 }
 
 #: 物理パネルとして描画する区分
-PANEL_CATEGORIES = (PHYSICAL, UPLINK)
+PANEL_CATEGORIES = (PHYSICAL, UPLINK, MGMT)
 
 #: 区分の表示順
-CATEGORY_ORDER = (PHYSICAL, UPLINK, LAG, VLAN, STACK, VIRTUAL, OTHER)
+CATEGORY_ORDER = (PHYSICAL, UPLINK, MGMT, LAG, VLAN, STACK, VIRTUAL, OTHER)
 
 # ifType (IANAifType-MIB)
 IF_TYPE_ETHERNET = 6
@@ -73,6 +75,11 @@ _UPLINK_NAME_RE = re.compile(
     re.I,
 )
 
+# OOB 管理ポート (Cisco Nexus mgmt0 / Arista Ma1 / Juniper fxp0・me0 など)
+_MGMT_NAME_RE = re.compile(
+    r"^(mgmt\d*|management\d*|ma\d+|me\d+|fxp\d+|vme\d*|oob\w*)$", re.I
+)
+
 #: ``プレフィックス + 数値階層`` に分解するパターン (例: Gi1/0/24, ge-0/0/12, Port 24)
 _PORT_NAME_RE = re.compile(
     r"^(?P<prefix>[A-Za-z][A-Za-z_\- ]*?)?\s*(?P<numbers>\d+(?:[/:]\d+)*)$"
@@ -98,6 +105,8 @@ def classify(
     if_type = info.if_type
 
     for name in names:
+        if _MGMT_NAME_RE.match(name):
+            return MGMT
         if _STACK_RE.search(name):
             return STACK
         if _LAG_RE.match(name):
@@ -303,6 +312,41 @@ def _default_rows(count: int, configured: int | None) -> int:
     return 2 if count >= 8 else 1
 
 
+#: 本体パネルとみなす最低ポート数 (これ以上あれば「本体がある」と判断する)
+MIN_MAIN_PANEL_PORTS = 8
+
+#: 本体から切り離されたシャーシが、この本数以下なら管理ポートとみなす
+MAX_MANAGEMENT_PORTS = 2
+
+
+def _detect_management_ports(
+    entries: list[tuple[InterfaceInfo, ParsedName | None]], categories: dict[str, str]
+) -> set[str]:
+    """本体から切り離された少数のポートを管理ポートとみなす。
+
+    Catalyst の ``GigabitEthernet0/0`` は名前の階層としては本体 (``Gi1/0/N``) と
+    別シャーシになるため、そのままではユニット 0 という不自然なパネルができる。
+    「本体と呼べる大きさのパネルがあり、そこから外れたポートが数本だけ」という
+    形なら OOB 管理ポートと判断する。
+    """
+    groups: dict[tuple[int, ...], list[str]] = {}
+    for info, parsed in entries:
+        if categories[info.if_index] not in (PHYSICAL, UPLINK):
+            continue
+        groups.setdefault(_chassis_of(parsed), []).append(info.if_index)
+
+    if len(groups) < 2:
+        return set()
+    if max(len(indexes) for indexes in groups.values()) < MIN_MAIN_PANEL_PORTS:
+        return set()
+
+    management: set[str] = set()
+    for indexes in groups.values():
+        if len(indexes) <= MAX_MANAGEMENT_PORTS:
+            management.update(indexes)
+    return management
+
+
 def _chassis_of(parsed: ParsedName | None) -> tuple[int, ...]:
     """パネルを分ける単位 (スタックメンバ / シャーシ) を求める。
 
@@ -320,6 +364,9 @@ def _build_panels(
     layout: PortLayoutConfig | None,
 ) -> list[PortPanel]:
     """物理ポートを筐体ごとのパネルに組み立てる。"""
+    management = [e for e in entries if categories[e[0].if_index] == MGMT]
+    entries = [e for e in entries if categories[e[0].if_index] != MGMT]
+
     chassis: dict[tuple[int, ...], list[tuple[InterfaceInfo, ParsedName | None]]] = {}
     for info, parsed in entries:
         chassis.setdefault(_chassis_of(parsed), []).append((info, parsed))
@@ -347,6 +394,15 @@ def _build_panels(
                     sections=sections,
                 )
             )
+
+    if management:
+        # 管理ポートは本体パネルの左端に置く (SFP が右端にあるのと対になる)
+        rows = _layout_rows(sorted(management, key=_sort_key), 1, "sequential")
+        section = PanelSection("mgmt", rows)
+        if panels:
+            panels[0].sections.insert(0, section)
+        else:
+            panels.append(PortPanel(key="mgmt", name=None, sections=[section]))
     return panels
 
 
@@ -379,6 +435,14 @@ def _build_configured_panels(
     return panels, used
 
 
+def _override_by_name(
+    overrides: dict[str, str], interfaces: list[InterfaceInfo], if_index: str
+) -> str | None:
+    """ifName を使った区分の強制指定を引く。"""
+    info = next((i for i in interfaces if i.if_index == if_index), None)
+    return overrides.get(info.name or "") if info else None
+
+
 def _port_number(entry: tuple[InterfaceInfo, ParsedName | None]) -> int | None:
     _, parsed = entry
     return parsed.port_number if parsed else None
@@ -397,6 +461,11 @@ def build_port_map(
         categories[info.if_index] = forced or classify(info, uplink_speed=uplink_speed)
 
     entries = [(info, _parse_any(info)) for info in interfaces]
+    # 名前だけでは分からない管理ポートを、構成の形から見つける
+    for if_index in _detect_management_ports(entries, categories):
+        if not (overrides.get(if_index) or _override_by_name(overrides, interfaces, if_index)):
+            categories[if_index] = MGMT
+
     panel_entries = [e for e in entries if categories[e[0].if_index] in PANEL_CATEGORIES]
 
     if layout and layout.groups:

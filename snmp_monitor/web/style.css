@@ -527,6 +527,12 @@ a {
   padding-left: 18px;
 }
 
+/* 管理ポートは本体ポートの左側に、同じく区切りを置いて並べる */
+.panel-section.mgmt {
+  border-right: 1px solid var(--border);
+  padding-right: 18px;
+}
+
 .panel-section-label {
   font-size: 10px;
   color: var(--text-muted);
@@ -543,6 +549,45 @@ a {
 .port-row {
   display: flex;
   gap: 5px;
+}
+
+/* 48 ポート機などは、そのままだと画面幅に収まらないのでタイルを詰める */
+.port-panel[data-dense="true"] .port {
+  width: 37px;
+  height: 34px;
+  gap: 1px;
+}
+
+.port-panel[data-dense="true"] .port-num {
+  font-size: 10.5px;
+}
+
+.port-panel[data-dense="true"] .port-speed {
+  font-size: 8.5px;
+}
+
+.port-panel[data-dense="true"] .port-led {
+  width: 14px;
+}
+
+.port-panel[data-dense="true"] .port-row {
+  gap: 4px;
+}
+
+.port-panel[data-dense="true"] .port-rows {
+  gap: 4px;
+}
+
+.port-panel[data-dense="true"] .panel-section.sfp {
+  padding-left: 14px;
+}
+
+.port-panel[data-dense="true"] .panel-section.mgmt {
+  padding-right: 14px;
+}
+
+.port-panel[data-dense="true"] .panel-sections {
+  gap: 14px;
 }
 
 /* 欠番の位置を空けておくと、実機のポート番号と目で対応が取れる */
