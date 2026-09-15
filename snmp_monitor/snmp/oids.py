@@ -167,9 +167,6 @@ IF_TYPE_LABELS = {
     161: "lag",
 }
 
-#: ダッシュボードで既定では隠すインターフェース種別
-VIRTUAL_IF_TYPES = {24, 53, 131}
-
 
 def status_label(value: int | None) -> str:
     """ifOperStatus / ifAdminStatus の数値をラベルに変換する。"""

@@ -17,8 +17,9 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .config import AppConfig, DeviceConfig
-from .models import DeviceSnapshot
+from .models import DeviceSnapshot, InterfaceInfo
 from .poller import Poller
+from .portmap import PANEL_CATEGORIES, build_port_map
 from .simulator import SimulatedSnmpClient
 from .snmp.client import SnmpClient
 from .snmp.oids import status_label
@@ -28,6 +29,9 @@ from .storage.timeseries import TimeSeriesStore, choose_resolution
 logger = logging.getLogger(__name__)
 
 WEB_DIR = Path(__file__).parent / "web"
+
+#: 区分がまだ決まっていないインターフェースの扱い
+PHYSICAL_FALLBACK = "physical"
 
 #: UI から指定できる表示期間
 RANGE_SECONDS: dict[str, int] = {
@@ -172,12 +176,15 @@ def create_app(config: AppConfig) -> FastAPI:
         return data
 
     def port_counts(device_id: str, snapshot: DeviceSnapshot | None) -> dict[str, int]:
+        """物理ポート (SFP を含む) だけを数える。"""
         if snapshot is None:
             return {"total": 0, "up": 0}
+        categories = {i.if_index: i.category for i in poller.interfaces(device_id)}
         physical = [
             s
             for s in snapshot.interface_samples
-            if _is_physical(poller, device_id, s.if_index)
+            # 区分がまだ決まっていない初回は、ひとまず物理として数える
+            if categories.get(s.if_index, PHYSICAL_FALLBACK) in PANEL_CATEGORIES
         ]
         return {
             "total": len(physical),
@@ -225,8 +232,31 @@ def create_app(config: AppConfig) -> FastAPI:
             if snapshot and snapshot.storages
             else await store.list_storages(device_id)
         )
-        data["interfaces"] = await build_interfaces(device_id, snapshot)
+        interfaces = await build_interfaces(device_id, snapshot)
+        data["interfaces"] = interfaces
+        data["port_map"] = build_or_reuse_port_map(device, interfaces).to_dict()
         return data
+
+    def build_or_reuse_port_map(device: DeviceConfig, interfaces: list[dict[str, Any]]):
+        """ポーリング済みならその結果を使い、未ポーリングなら DB の情報から作る。"""
+        cached = poller.port_map(device.id)
+        if cached is not None:
+            return cached
+        infos = [
+            InterfaceInfo(
+                if_index=row["if_index"],
+                name=row.get("name"),
+                descr=row.get("descr"),
+                alias=row.get("alias"),
+                if_type=row.get("if_type"),
+                speed_bps=row.get("speed_bps"),
+                mtu=row.get("mtu"),
+                mac=row.get("mac"),
+                admin_status=row.get("admin_status"),
+            )
+            for row in interfaces
+        ]
+        return build_port_map(infos, device.port_layout)
 
     async def build_interfaces(
         device_id: str, snapshot: DeviceSnapshot | None
@@ -249,8 +279,10 @@ def create_app(config: AppConfig) -> FastAPI:
                 }
             )
         samples = {s.if_index: s for s in (snapshot.interface_samples if snapshot else [])}
+        categories = {i.if_index: i.category for i in poller.interfaces(device_id)}
         result = []
         for if_index, row in stored.items():
+            row["category"] = categories.get(if_index)
             sample = samples.get(if_index)
             if sample is not None:
                 row["oper_status"] = sample.oper_status
@@ -273,6 +305,13 @@ def create_app(config: AppConfig) -> FastAPI:
     async def list_interfaces(device_id: str) -> list[dict[str, Any]]:
         device_config(device_id)
         return await build_interfaces(device_id, poller.snapshot(device_id))
+
+    @app.get("/api/devices/{device_id}/portmap")
+    async def port_map(device_id: str) -> dict[str, Any]:
+        """区分と物理配置の推定結果を返す。"""
+        device = device_config(device_id)
+        interfaces = await build_interfaces(device_id, poller.snapshot(device_id))
+        return build_or_reuse_port_map(device, interfaces).to_dict()
 
     @app.get("/api/devices/{device_id}/history")
     async def device_history(
@@ -366,17 +405,6 @@ def _sum_rate(snapshot: DeviceSnapshot, attribute: str) -> float | None:
         if getattr(s, attribute) is not None
     ]
     return sum(values) if values else None
-
-
-def _is_physical(poller: Poller, device_id: str, if_index: str) -> bool:
-    from .snmp.oids import VIRTUAL_IF_TYPES
-
-    info = next(
-        (i for i in poller.interfaces(device_id) if i.if_index == if_index), None
-    )
-    if info is None:
-        return True
-    return info.if_type not in VIRTUAL_IF_TYPES
 
 
 def _index_sort_key(if_index: str) -> tuple[int, str]:

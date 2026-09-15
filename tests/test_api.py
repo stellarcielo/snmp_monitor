@@ -11,13 +11,16 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from snmp_monitor import simulator
 from snmp_monitor.api import RANGE_SECONDS, create_app
 from snmp_monitor.config import AppConfig, PollingConfig, StorageConfig
 from snmp_monitor.simulator import DEMO_DEVICES
 
 
 @pytest.fixture
-def client(tmp_path):
+def client(tmp_path, monkeypatch):
+    # デモの「稀に無応答」はテストを不安定にするだけなので止めておく
+    monkeypatch.setattr(simulator, "UNREACHABLE_PROBABILITY", 0.0)
     config = AppConfig(
         demo_mode=True,
         devices=[d.model_copy(deep=True) for d in DEMO_DEVICES[:2]],
@@ -37,6 +40,17 @@ def wait_for_poll(client: TestClient, timeout: float = 20.0) -> dict:
             return summary
         time.sleep(0.25)
     pytest.fail("ポーリング結果が得られませんでした")
+
+
+def wait_for_device(client: TestClient, device_id: str, timeout: float = 20.0) -> dict:
+    """指定デバイスの構成が取得できるまで待つ。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        detail = client.get(f"/api/devices/{device_id}").json()
+        if detail.get("interfaces"):
+            return detail
+        time.sleep(0.25)
+    pytest.fail(f"{device_id} の構成を取得できませんでした")
 
 
 def test_index_is_served(client):
@@ -105,6 +119,52 @@ def test_websocket_sends_initial_summary(client):
         message = json.loads(websocket.receive_text())
         assert message["type"] == "summary"
         assert message["data"]["devices_total"] == 2
+
+
+def test_portmap_endpoint(client):
+    data = client.get("/api/devices/demo-switch-1/portmap").json()
+    assert "panels" in data
+    assert "sections" in data
+    assert "categories" in data
+
+
+def test_portmap_unknown_device_returns_404(client):
+    assert client.get("/api/devices/nope/portmap").status_code == 404
+
+
+def test_device_detail_includes_port_map(client):
+    detail = wait_for_device(client, "demo-switch-1")
+
+    port_map = detail["port_map"]
+    assert port_map["panels"], "物理パネルが組み立てられていません"
+    # 各インターフェースに区分が付いている
+    assert all(i["category"] for i in detail["interfaces"])
+    # パネルに並ぶのは物理ポートと SFP だけ
+    categories = port_map["categories"]
+    for panel in port_map["panels"]:
+        for section in panel["sections"]:
+            for row in section["rows"]:
+                for if_index in row:
+                    if if_index:
+                        assert categories[if_index] in {"physical", "uplink"}
+
+
+def test_demo_switch_has_vlan_and_lag_sections(client):
+    detail = wait_for_device(client, "demo-switch-1")
+    categories = {s["category"] for s in detail["port_map"]["sections"]}
+    assert {"vlan", "lag"} <= categories
+
+
+def test_port_counts_exclude_virtual_interfaces(client):
+    detail = wait_for_device(client, "demo-gateway")
+    summary = client.get("/api/summary").json()
+    gateway = next(d for d in summary["devices"] if d["id"] == "demo-gateway")
+    physical = [
+        i for i in detail["interfaces"] if i["category"] in {"physical", "uplink"}
+    ]
+    # lo や VLAN サブインターフェースはポート数に含めない
+    assert gateway["ports"]["total"] == len(physical)
+    assert gateway["ports"]["total"] < len(detail["interfaces"])
 
 
 def test_polling_populates_device_state(client):
