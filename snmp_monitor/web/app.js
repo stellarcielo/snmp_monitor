@@ -533,6 +533,93 @@ function rangeTabsHtml(active) {
   ).join("")}</div>`;
 }
 
+//: サーバが返す区分キーに対する表示名
+const CATEGORY_LABELS = {
+  physical: "物理ポート",
+  uplink: "アップリンク / SFP",
+  lag: "LAG / ポートチャネル",
+  vlan: "VLAN インターフェース",
+  stack: "スタックポート",
+  virtual: "仮想インターフェース",
+  other: "その他",
+};
+
+function portPanelsHtml(portMap, interfaces) {
+  const byIndex = new Map(interfaces.map((i) => [i.if_index, i]));
+  if (!portMap || !portMap.panels || !portMap.panels.length) {
+    // 推定できなかった場合は、これまでどおり単純に並べる
+    return `<div class="port-rows"><div class="port-row">${interfaces
+      .map(portHtml)
+      .join("")}</div></div>`;
+  }
+  return portMap.panels
+    .map(
+      (panel) => `
+      <div class="port-panel">
+        ${panel.name ? `<div class="panel-title">${escapeHtml(panel.name)}</div>` : ""}
+        <div class="panel-sections">
+          ${panel.sections
+            .map(
+              (section) => `
+            <div class="panel-section ${section.kind}">
+              ${section.kind === "sfp" ? `<div class="panel-section-label">SFP</div>` : ""}
+              <div class="port-rows">
+                ${section.rows
+                  .map(
+                    (row) =>
+                      `<div class="port-row">${row
+                        .map((index) =>
+                          index && byIndex.has(index)
+                            ? portHtml(byIndex.get(index))
+                            : `<div class="port empty" aria-hidden="true"></div>`
+                        )
+                        .join("")}</div>`
+                  )
+                  .join("")}
+              </div>
+            </div>`
+            )
+            .join("")}
+        </div>
+      </div>`
+    )
+    .join("");
+}
+
+function ifaceChipHtml(iface) {
+  const rate =
+    typeof iface.in_bps === "number" || typeof iface.out_bps === "number"
+      ? `<span class="chip-rate">↓${formatBps(iface.in_bps)} ↑${formatBps(iface.out_bps)}</span>`
+      : "";
+  return `
+    <div class="iface-chip ${portStateClass(iface)}" data-port="${escapeHtml(iface.if_index)}"
+         title="${escapeHtml(`${iface.label} / ${iface.oper_status_label}`)}">
+      <span class="chip-led"></span>
+      <span class="chip-name">${escapeHtml(iface.label)}</span>
+      ${iface.alias ? `<span class="chip-alias">${escapeHtml(iface.alias)}</span>` : ""}
+      ${rate}
+    </div>`;
+}
+
+function ifaceSectionsHtml(portMap, interfaces) {
+  if (!portMap || !portMap.sections || !portMap.sections.length) return "";
+  const byIndex = new Map(interfaces.map((i) => [i.if_index, i]));
+  return portMap.sections
+    .map((section) => {
+      const members = section.if_indexes.map((i) => byIndex.get(i)).filter(Boolean);
+      if (!members.length) return "";
+      const label = CATEGORY_LABELS[section.category] || section.category;
+      return `
+        <div class="iface-section">
+          <div class="iface-section-title">${escapeHtml(label)}
+            <span class="iface-count">${members.length}</span>
+          </div>
+          <div class="iface-chips">${members.map(ifaceChipHtml).join("")}</div>
+        </div>`;
+    })
+    .join("");
+}
+
 function portHtml(iface) {
   const speed = formatSpeed(iface.speed_bps);
   const title = `${iface.label} / ${iface.oper_status_label}${
@@ -665,7 +752,12 @@ async function renderDeviceDetail(deviceId) {
         </div>
       </div>
       <div class="card-body">
-        <div class="port-grid" id="port-grid">${interfaces.map(portHtml).join("")}</div>
+        <div class="port-panels" id="port-panels">
+          ${portPanelsHtml(device.port_map, interfaces)}
+        </div>
+        <div class="iface-sections" id="iface-sections">
+          ${ifaceSectionsHtml(device.port_map, interfaces)}
+        </div>
       </div>
     </section>
 
@@ -692,7 +784,7 @@ async function renderDeviceDetail(deviceId) {
         <table>
           <thead>
             <tr>
-              <th>ポート</th><th>説明</th><th>状態</th><th class="num">速度</th>
+              <th>ポート</th><th>区分</th><th>説明</th><th>状態</th><th class="num">速度</th>
               <th class="num">受信</th><th class="num">送信</th>
               <th class="num">エラー/s</th><th class="num">破棄/s</th><th>MAC</th>
             </tr>
@@ -724,6 +816,9 @@ function portRowHtml(iface) {
   return `
     <tr data-port-row="${escapeHtml(iface.if_index)}">
       <td>${escapeHtml(iface.label)}</td>
+      <td class="muted">${escapeHtml(
+        CATEGORY_LABELS[iface.category] || iface.category || "–"
+      )}</td>
       <td class="muted">${escapeHtml(iface.alias || iface.descr || "")}</td>
       <td data-field="status">${badge}</td>
       <td class="num muted">${iface.speed_bps ? formatSI(iface.speed_bps, "bps", 0) : "–"}</td>
@@ -748,7 +843,7 @@ function bindDetailEvents(deviceId) {
 
   const selectPort = async (ifIndex) => {
     state.detail.selectedPort = ifIndex;
-    content.querySelectorAll(".port").forEach((port) => {
+    content.querySelectorAll(".port, .iface-chip").forEach((port) => {
       port.classList.toggle("selected", port.dataset.port === ifIndex);
     });
     content.querySelectorAll("tr[data-port-row]").forEach((row) => {
@@ -757,7 +852,7 @@ function bindDetailEvents(deviceId) {
     await loadPortChart(deviceId, ifIndex);
   };
 
-  content.querySelectorAll(".port").forEach((port) => {
+  content.querySelectorAll(".port[data-port], .iface-chip").forEach((port) => {
     port.addEventListener("click", () => selectPort(port.dataset.port));
   });
   content.querySelectorAll("tr[data-port-row]").forEach((row) => {
@@ -884,6 +979,15 @@ function updateDetailLive(snapshot) {
     if (portNode) {
       const selected = portNode.classList.contains("selected");
       portNode.className = `port ${portStateClass(iface)}${selected ? " selected" : ""}`;
+    }
+    const chip = content.querySelector(`.iface-chip[data-port="${CSS.escape(iface.if_index)}"]`);
+    if (chip) {
+      const selected = chip.classList.contains("selected");
+      chip.className = `iface-chip ${portStateClass(iface)}${selected ? " selected" : ""}`;
+      const rate = chip.querySelector(".chip-rate");
+      if (rate) {
+        rate.textContent = `↓${formatBps(iface.in_bps)} ↑${formatBps(iface.out_bps)}`;
+      }
     }
     const row = content.querySelector(`tr[data-port-row="${CSS.escape(iface.if_index)}"]`);
     if (row) {

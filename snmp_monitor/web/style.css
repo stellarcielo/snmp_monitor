@@ -239,7 +239,8 @@ a {
 .card-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 10px 12px;
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
 }
@@ -248,6 +249,7 @@ a {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .card-header .spacer {
@@ -485,16 +487,180 @@ a {
   color: var(--text-primary);
 }
 
-/* ---------- ポートグリッド ---------- */
-.port-grid {
+/* ---------- ポートパネル ---------- */
+.port-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* 機器のフェイスプレートに見立てた枠 */
+.port-panel {
+  width: fit-content;
+  max-width: 100%;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.panel-title {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+}
+
+.panel-sections {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  /* ポート数が多い機器では横スクロールさせる (縦に折り返すと配置が崩れるため) */
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+/* SFP 区画は実機と同じようにひと区切り置いて右側へ */
+.panel-section.sfp {
+  border-left: 1px solid var(--border);
+  padding-left: 18px;
+}
+
+.panel-section-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  letter-spacing: 0.04em;
+}
+
+.port-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.port-row {
+  display: flex;
+  gap: 5px;
+}
+
+/* 欠番の位置を空けておくと、実機のポート番号と目で対応が取れる */
+.port.empty {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--border);
+  cursor: default;
+  opacity: 0.4;
+}
+
+.port.empty:hover {
+  background: transparent;
+  border-color: var(--border);
+}
+
+/* ---------- 物理以外のインターフェース ---------- */
+.iface-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.iface-sections:empty {
+  margin-top: 0;
+}
+
+.iface-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+
+.iface-count {
+  background: var(--surface-3);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  letter-spacing: 0;
+}
+
+.iface-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
+}
+
+.iface-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12.5px;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.iface-chip:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.iface-chip.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.chip-led {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex: none;
+}
+
+.iface-chip.up .chip-led {
+  background: var(--status-good);
+}
+.iface-chip.down .chip-led {
+  background: #4a4f66;
+}
+.iface-chip.err .chip-led {
+  background: var(--status-critical);
+}
+.iface-chip.disabled .chip-led {
+  background: var(--status-warning);
+}
+
+.chip-name {
+  font-weight: 500;
+}
+
+.chip-alias {
+  color: var(--text-muted);
+}
+
+.chip-rate {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  padding-left: 4px;
+  border-left: 1px solid var(--border);
 }
 
 .port {
   width: 44px;
   height: 38px;
+  flex: none;
   border-radius: var(--radius-sm);
   background: var(--surface-3);
   border: 1px solid var(--border);
@@ -870,5 +1036,9 @@ th.num {
 
   .content {
     padding: 14px;
+  }
+
+  .chip-alias {
+    display: none;
   }
 }
