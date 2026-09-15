@@ -11,14 +11,14 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .config import AppConfig, DeviceConfig
 from .models import DeviceSnapshot, InterfaceInfo
-from .poller import Poller
+from .poller import ClientFactory, Poller
 from .portmap import PANEL_CATEGORIES, build_port_map
 from .simulator import SimulatedSnmpClient
 from .snmp.client import SnmpClient
@@ -32,6 +32,19 @@ WEB_DIR = Path(__file__).parent / "web"
 
 #: 区分がまだ決まっていないインターフェースの扱い
 PHYSICAL_FALLBACK = "physical"
+
+#: 更新したはずの画面が古いまま表示されないよう、毎回サーバに確認させる。
+#: ETag での再検証は残るので、変更がなければ 304 で済む。
+NO_CACHE_HEADERS = {"Cache-Control": "no-cache"}
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """ブラウザに必ず更新確認をさせる静的ファイル配信。"""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 #: UI から指定できる表示期間
 RANGE_SECONDS: dict[str, int] = {
@@ -90,12 +103,16 @@ class ConnectionManager:
         return len(self._connections)
 
 
-def create_app(config: AppConfig) -> FastAPI:
-    """設定から FastAPI アプリを組み立てる。"""
+def create_app(config: AppConfig, client_factory: ClientFactory | None = None) -> FastAPI:
+    """設定から FastAPI アプリを組み立てる。
+
+    ``client_factory`` は SNMP クライアントの差し替え口。通常は省略し、
+    デモモードならシミュレータ、そうでなければ実機用の :class:`SnmpClient` を使う。
+    """
 
     database = Database(config.storage.path)
     store = TimeSeriesStore(database, config.storage)
-    factory = SimulatedSnmpClient if config.demo_mode else SnmpClient
+    factory = client_factory or (SimulatedSnmpClient if config.demo_mode else SnmpClient)
     poller = Poller(config, store, client_factory=factory)
     manager = ConnectionManager()
 
@@ -384,11 +401,11 @@ def create_app(config: AppConfig) -> FastAPI:
 
     # -- 静的ファイル ----------------------------------------------------
     if WEB_DIR.exists():
-        app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
+        app.mount("/static", NoCacheStaticFiles(directory=WEB_DIR), name="static")
 
         @app.get("/")
         async def index() -> FileResponse:
-            return FileResponse(WEB_DIR / "index.html")
+            return FileResponse(WEB_DIR / "index.html", headers=NO_CACHE_HEADERS)
     else:  # pragma: no cover - 開発時のみ
 
         @app.get("/")

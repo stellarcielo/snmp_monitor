@@ -9,11 +9,12 @@ import json
 import time
 
 import pytest
+from fakes import FakeClient, cisco_switch_device
 from fastapi.testclient import TestClient
 
 from snmp_monitor import simulator
 from snmp_monitor.api import RANGE_SECONDS, create_app
-from snmp_monitor.config import AppConfig, PollingConfig, StorageConfig
+from snmp_monitor.config import AppConfig, DeviceConfig, PollingConfig, StorageConfig
 from snmp_monitor.simulator import DEMO_DEVICES
 
 
@@ -62,6 +63,13 @@ def test_index_is_served(client):
 def test_static_assets_are_served(client):
     for path in ("/static/app.js", "/static/chart.js", "/static/style.css"):
         assert client.get(path).status_code == 200
+
+
+def test_assets_are_revalidated_by_the_browser(client):
+    """更新した画面が古いキャッシュのまま表示されないこと。"""
+    for path in ("/", "/static/app.js", "/static/chart.js", "/static/style.css"):
+        response = client.get(path)
+        assert response.headers.get("cache-control") == "no-cache", path
 
 
 def test_summary_shape(client):
@@ -184,3 +192,68 @@ def test_polling_populates_device_state(client):
     history = client.get(f"/api/devices/{device['id']}/history?range=15m").json()
     assert history["resolution"] == "raw"
     assert len(history["metrics"]) >= 1
+
+
+# --- デモモードを使わない経路 -------------------------------------------
+# 実機と同じコードパス (poller -> portmap -> api) を通ることを確認する。
+# 違いは SNMP クライアントを疑似エージェントに差し替えている点だけ。
+
+
+@pytest.fixture
+def real_mode_client(tmp_path):
+    state = cisco_switch_device(port_count=8)
+    config = AppConfig(
+        demo_mode=False,
+        devices=[DeviceConfig(id="sw1", name="実機相当スイッチ", host="127.0.0.1")],
+        polling=PollingConfig(interval_seconds=5.0),
+        storage=StorageConfig(path=tmp_path / "real.db"),
+    )
+    app = create_app(config, client_factory=lambda device: FakeClient(device, state))
+    with TestClient(app) as client:
+        yield client
+
+
+def test_real_mode_is_not_demo(real_mode_client):
+    assert real_mode_client.get("/api/summary").json()["demo_mode"] is False
+
+
+def test_real_mode_builds_port_map(real_mode_client):
+    detail = wait_for_device(real_mode_client, "sw1")
+    port_map = detail["port_map"]
+
+    # 物理パネルが 2 段に組まれている
+    main_section = port_map["panels"][0]["sections"][0]
+    assert main_section["kind"] == "main"
+    assert len(main_section["rows"]) == 2
+    # SFP 区画が分かれている
+    assert [s["kind"] for s in port_map["panels"][0]["sections"]] == ["main", "sfp"]
+
+    # 物理以外は区分ごとのセクションに分かれている
+    categories = {s["category"] for s in port_map["sections"]}
+    assert {"lag", "vlan", "stack", "virtual"} == categories
+
+
+def test_real_mode_assigns_categories_to_interfaces(real_mode_client):
+    detail = wait_for_device(real_mode_client, "sw1")
+    by_name = {i["name"]: i["category"] for i in detail["interfaces"]}
+
+    assert by_name["GigabitEthernet1/0/1"] == "physical"
+    assert by_name["TenGigabitEthernet1/1/1"] == "uplink"
+    assert by_name["Port-channel1"] == "lag"
+    assert by_name["Vlan100"] == "vlan"
+    assert by_name["StackPort1"] == "stack"
+    assert by_name["Loopback0"] == "virtual"
+
+
+def test_real_mode_port_counts_exclude_non_physical(real_mode_client):
+    wait_for_device(real_mode_client, "sw1")
+    summary = real_mode_client.get("/api/summary").json()
+    # 物理 8 本 + SFP 1 本。VLAN・LAG・スタック・ループバックは数えない
+    assert summary["devices"][0]["ports"]["total"] == 9
+
+
+def test_real_mode_portmap_endpoint(real_mode_client):
+    wait_for_device(real_mode_client, "sw1")
+    port_map = real_mode_client.get("/api/devices/sw1/portmap").json()
+    assert port_map["panels"]
+    assert port_map["categories"]
