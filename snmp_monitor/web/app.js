@@ -566,8 +566,11 @@ function portPanelsHtml(portMap, interfaces) {
       .join("")}</div></div>`;
   }
   return portMap.panels
-    .map(
-      (panel) => `
+    .map((panel) => {
+      // 見出しを持つ区画が 1 つでもあれば、全区画に見出し行を置いて上端を揃える
+      // (本体区画には見出しを出さないので、中身は空のまま高さだけ確保する)
+      const withLabels = panel.sections.some((section) => SECTION_LABELS[section.kind]);
+      return `
       <div class="port-panel" data-dense="${isDensePanel(panel)}">
         ${panel.name ? `<div class="panel-title">${escapeHtml(panel.name)}</div>` : ""}
         <div class="panel-sections">
@@ -576,8 +579,8 @@ function portPanelsHtml(portMap, interfaces) {
               (section) => `
             <div class="panel-section ${section.kind}">
               ${
-                SECTION_LABELS[section.kind]
-                  ? `<div class="panel-section-label">${SECTION_LABELS[section.kind]}</div>`
+                withLabels
+                  ? `<div class="panel-section-label">${SECTION_LABELS[section.kind] || ""}</div>`
                   : ""
               }
               <div class="port-rows">
@@ -598,8 +601,8 @@ function portPanelsHtml(portMap, interfaces) {
             )
             .join("")}
         </div>
-      </div>`
-    )
+      </div>`;
+    })
     .join("");
 }
 

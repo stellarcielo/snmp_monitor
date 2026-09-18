@@ -535,9 +535,12 @@ a {
 
 .panel-section-label {
   font-size: 10px;
+  line-height: 1.5;
   color: var(--text-muted);
   margin-bottom: 6px;
   letter-spacing: 0.04em;
+  /* 見出しのない本体区画と上端を揃えるため、空でも行の高さを保つ */
+  min-height: 1.5em;
 }
 
 .port-rows {
