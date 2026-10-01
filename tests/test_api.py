@@ -9,7 +9,7 @@ import json
 import time
 
 import pytest
-from fakes import FakeClient, cisco_switch_device
+from fakes import FakeClient, catalyst_3850_device, cisco_switch_device
 from fastapi.testclient import TestClient
 
 from snmp_monitor import simulator
@@ -258,3 +258,60 @@ def test_real_mode_portmap_endpoint(real_mode_client):
     port_map = real_mode_client.get("/api/devices/sw1/portmap").json()
     assert port_map["panels"]
     assert port_map["categories"]
+
+
+
+# --- Catalyst 3850 の実機構成 -------------------------------------------
+@pytest.fixture
+def c3850_client(tmp_path):
+    state = catalyst_3850_device()
+    config = AppConfig(
+        demo_mode=False,
+        devices=[DeviceConfig(id="c3850", name="C3850", host="127.0.0.1")],
+        polling=PollingConfig(interval_seconds=5.0),
+        storage=StorageConfig(path=tmp_path / "c3850.db"),
+    )
+    app = create_app(config, client_factory=lambda device: FakeClient(device, state))
+    with TestClient(app) as client:
+        yield client
+
+
+def test_c3850_shows_every_physical_port(c3850_client):
+    detail = wait_for_device(c3850_client, "c3850")
+    port_map = detail["port_map"]
+
+    shown = [
+        index
+        for panel in port_map["panels"]
+        for section in panel["sections"]
+        for row in section["rows"]
+        for index in row
+        if index
+    ]
+    physical = [i for i in detail["interfaces"] if i["category"] in set(PANEL_CATEGORIES)]
+    # Gi0/0 + Gi1/0/1-48 + Gi1/1/1-4 + Te1/1/1-4 がひとつも欠けずに並ぶ
+    assert len(shown) == len(physical) == 57
+
+
+def test_c3850_sections_follow_the_physical_layout(c3850_client):
+    detail = wait_for_device(c3850_client, "c3850")
+    sections = detail["port_map"]["panels"][0]["sections"]
+    by_index = {i["if_index"]: i["name"] for i in detail["interfaces"]}
+
+    assert [s["kind"] for s in sections] == ["mgmt", "main", "module", "sfp"]
+    main = sections[1]
+    # 本体の先頭には Gi1/1/1 (モジュール) ではなく Gi1/0/1 が来る
+    assert by_index[main["rows"][0][0]] == "Gi1/0/1"
+    assert by_index[main["rows"][1][0]] == "Gi1/0/2"
+    assert sections[2]["slot"] == 1
+
+
+def test_c3850_logical_interfaces_are_classified(c3850_client):
+    detail = wait_for_device(c3850_client, "c3850")
+    by_name = {i["name"]: i["category"] for i in detail["interfaces"]}
+
+    for name in ("Vl1", "VLAN-1", "VLAN-1002", "VLAN-1005"):
+        assert by_name[name] == "vlan", name
+    for name in ("StackPort1", "StackSub-St1-1", "StackSub-St1-2"):
+        assert by_name[name] == "stack", name
+    assert by_name["Nu0"] == "virtual"

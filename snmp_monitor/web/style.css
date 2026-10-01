@@ -521,7 +521,8 @@ a {
   padding-bottom: 2px;
 }
 
-/* SFP 区画は実機と同じようにひと区切り置いて右側へ */
+/* モジュールと SFP の区画は、実機と同じようにひと区切り置いて右側へ */
+.panel-section.module,
 .panel-section.sfp {
   border-left: 1px solid var(--border);
   padding-left: 18px;
@@ -581,6 +582,7 @@ a {
   gap: 4px;
 }
 
+.port-panel[data-dense="true"] .panel-section.module,
 .port-panel[data-dense="true"] .panel-section.sfp {
   padding-left: 14px;
 }

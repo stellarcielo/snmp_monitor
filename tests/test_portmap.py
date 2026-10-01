@@ -430,3 +430,116 @@ def test_named_management_port_is_detected_even_in_small_devices():
     # 名前で分かる場合は構成の大きさに関係なく管理ポートとして扱う
     interfaces = [iface(1, "mgmt0"), iface(2, "Ethernet1"), iface(3, "Ethernet2")]
     assert build_port_map(interfaces).categories["1"] == MGMT
+
+
+# --- スロットごとの区画 (Catalyst 3850 のネットワークモジュール) -------
+def catalyst_3850_interfaces():
+    """Gi0/0 + 本体 Gi1/0/1-48 + モジュール Gi1/1/1-4 + Te1/1/1-4。
+
+    C3850 はネットワークモジュールの 1G / 10G ポートが最初から両方定義されている。
+    """
+    interfaces = [iface(1, "Gi0/0")]
+    interfaces += [iface(100 + n, f"Gi1/0/{n}") for n in range(1, 49)]
+    interfaces += [iface(200 + n, f"Gi1/1/{n}") for n in range(1, 5)]
+    interfaces += [iface(300 + n, f"Te1/1/{n}", speed=TEN_GBE) for n in range(1, 5)]
+    return interfaces
+
+
+def shown_indexes(port_map):
+    return [
+        index
+        for panel in port_map.panels
+        for section in panel.sections
+        for row in section.rows
+        for index in row
+        if index
+    ]
+
+
+def test_no_port_disappears_when_slots_share_port_numbers():
+    # Gi1/0/1 と Gi1/1/1 は末尾が同じ 1 番。以前はここで衝突して 4 本消えていた
+    interfaces = catalyst_3850_interfaces()
+    shown = shown_indexes(build_port_map(interfaces))
+
+    assert len(shown) == len(interfaces)
+    assert len(set(shown)) == len(shown)  # 同じポートが二重に出ていない
+
+
+def test_main_section_starts_with_the_first_front_port():
+    interfaces = catalyst_3850_interfaces()
+    port_map = build_port_map(interfaces)
+    main = next(s for s in port_map.panels[0].sections if s.kind == "main")
+
+    assert names(port_map, interfaces, main.rows[0][:3]) == [
+        "Gi1/0/1",
+        "Gi1/0/3",
+        "Gi1/0/5",
+    ]
+    assert sum(len(row) for row in main.rows) == 48
+
+
+def test_network_module_gets_its_own_section():
+    interfaces = catalyst_3850_interfaces()
+    sections = build_port_map(interfaces).panels[0].sections
+
+    assert [s.kind for s in sections] == ["mgmt", "main", "module", "sfp"]
+    module = sections[2]
+    assert module.slot == 1
+    assert sorted(i for row in module.rows for i in row if i) == ["201", "202", "203", "204"]
+
+
+def test_single_sfp_slot_has_no_slot_number():
+    interfaces = catalyst_3850_interfaces()
+    sfp = build_port_map(interfaces).panels[0].sections[-1]
+    assert sfp.kind == "sfp"
+    assert sfp.slot is None
+
+
+def test_sfp_in_multiple_slots_are_split_and_numbered():
+    interfaces = [iface(n, f"Gi1/0/{n}") for n in range(1, 25)]
+    interfaces += [iface(100 + n, f"Te1/1/{n}", speed=TEN_GBE) for n in range(1, 3)]
+    interfaces += [iface(200 + n, f"Te1/2/{n}", speed=TEN_GBE) for n in range(1, 3)]
+    sections = build_port_map(interfaces).panels[0].sections
+
+    sfp = [s for s in sections if s.kind == "sfp"]
+    assert [s.slot for s in sfp] == [1, 2]
+    assert len(shown_indexes(build_port_map(interfaces))) == len(interfaces)
+
+
+def test_slot_is_only_serialized_when_present():
+    sections = build_port_map(catalyst_3850_interfaces()).to_dict()["panels"][0]["sections"]
+    by_kind = {s["kind"]: s for s in sections}
+    assert by_kind["module"]["slot"] == 1
+    assert "slot" not in by_kind["main"]
+    assert "slot" not in by_kind["sfp"]
+
+
+def test_duplicate_numbers_in_one_section_never_drop_ports():
+    # 未知の命名で同じ区画に同じ番号が並んでも、ポートを消さずに並び順で置く
+    interfaces = [
+        iface(1, "Port 1"),
+        iface(2, "port1"),
+        iface(3, "Port 2"),
+        iface(4, "port2"),
+    ]
+    # 区分と区画を同じにするため、名前の違いでスロットが分かれないものを使う
+    shown = shown_indexes(build_port_map(interfaces))
+    assert sorted(shown) == ["1", "2", "3", "4"]
+
+
+def test_stack_with_modules_keeps_every_port():
+    # スタック 2 台それぞれにモジュールがある構成
+    interfaces = []
+    for unit in (1, 2):
+        base = unit * 1000
+        interfaces += [iface(base + n, f"Gi{unit}/0/{n}") for n in range(1, 25)]
+        interfaces += [iface(base + 100 + n, f"Gi{unit}/1/{n}") for n in range(1, 5)]
+        interfaces += [
+            iface(base + 200 + n, f"Te{unit}/1/{n}", speed=TEN_GBE) for n in range(1, 5)
+        ]
+    port_map = build_port_map(interfaces)
+
+    assert len(port_map.panels) == 2
+    for panel in port_map.panels:
+        assert [s.kind for s in panel.sections] == ["main", "module", "sfp"]
+    assert len(shown_indexes(port_map)) == len(interfaces)

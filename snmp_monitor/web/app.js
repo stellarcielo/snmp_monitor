@@ -546,7 +546,14 @@ const CATEGORY_LABELS = {
 };
 
 //: パネル内の区画に付ける見出し
-const SECTION_LABELS = { sfp: "SFP", mgmt: "MGMT" };
+const SECTION_LABELS = { sfp: "SFP", mgmt: "MGMT", module: "MOD" };
+
+/** 区画の見出し。スロット番号があれば添える (例: MOD 1)。 */
+function sectionLabel(section) {
+  const base = SECTION_LABELS[section.kind];
+  if (!base) return "";
+  return section.slot === undefined || section.slot === null ? base : `${base} ${section.slot}`;
+}
 
 //: この列数を超えるパネルは、画面幅に収まるようタイルを小さくする
 const DENSE_COLUMN_THRESHOLD = 16;
@@ -569,7 +576,7 @@ function portPanelsHtml(portMap, interfaces) {
     .map((panel) => {
       // 見出しを持つ区画が 1 つでもあれば、全区画に見出し行を置いて上端を揃える
       // (本体区画には見出しを出さないので、中身は空のまま高さだけ確保する)
-      const withLabels = panel.sections.some((section) => SECTION_LABELS[section.kind]);
+      const withLabels = panel.sections.some((section) => sectionLabel(section));
       return `
       <div class="port-panel" data-dense="${isDensePanel(panel)}">
         ${panel.name ? `<div class="panel-title">${escapeHtml(panel.name)}</div>` : ""}
@@ -580,7 +587,7 @@ function portPanelsHtml(portMap, interfaces) {
             <div class="panel-section ${section.kind}">
               ${
                 withLabels
-                  ? `<div class="panel-section-label">${SECTION_LABELS[section.kind] || ""}</div>`
+                  ? `<div class="panel-section-label">${escapeHtml(sectionLabel(section))}</div>`
                   : ""
               }
               <div class="port-rows">

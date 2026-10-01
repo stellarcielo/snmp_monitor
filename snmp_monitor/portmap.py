@@ -210,9 +210,14 @@ class PanelSection:
 
     kind: str
     rows: list[list[str | None]] = field(default_factory=list)
+    #: モジュールや SFP が複数のスロットにあるときのスロット番号
+    slot: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"kind": self.kind, "rows": self.rows}
+        data: dict[str, Any] = {"kind": self.kind, "rows": self.rows}
+        if self.slot is not None:
+            data["slot"] = self.slot
+        return data
 
 
 @dataclass
@@ -282,7 +287,12 @@ def _layout_rows(
         return [[info.if_index for info, _ in entries]]
 
     numbers = [parsed.port_number for _, parsed in entries if parsed]
-    use_numbers = order == "odd-top" and len(numbers) == len(entries)
+    use_numbers = (
+        order == "odd-top"
+        and len(numbers) == len(entries)
+        # 同じ番号が複数あると位置が衝突して片方が消えるため、並び順で配置する
+        and len(set(numbers)) == len(numbers)
+    )
 
     if not use_numbers:
         # 番号が読めない場合は、並び順のまま上下に振り分ける
@@ -347,6 +357,27 @@ def _detect_management_ports(
     return management
 
 
+def _group_by_slot(
+    entries: list[tuple[InterfaceInfo, ParsedName | None]],
+) -> dict[tuple[int, ...], list[tuple[InterfaceInfo, ParsedName | None]]]:
+    """末尾のポート番号を除いた階層 (スロット) ごとにまとめる。"""
+    groups: dict[tuple[int, ...], list[tuple[InterfaceInfo, ParsedName | None]]] = {}
+    for entry in entries:
+        _, parsed = entry
+        groups.setdefault(parsed.unit if parsed else (), []).append(entry)
+    return groups
+
+
+def _slot_number(unit: tuple[int, ...]) -> int | None:
+    """``(1, 1)`` のようなスロットの階層から、表示用の番号を取り出す。"""
+    return unit[-1] if unit else None
+
+
+def _small_rows(entries: list[Any]) -> int:
+    """モジュールや SFP のような小さな区画の段数。"""
+    return 2 if len(entries) >= 4 else 1
+
+
 def _chassis_of(parsed: ParsedName | None) -> tuple[int, ...]:
     """パネルを分ける単位 (スタックメンバ / シャーシ) を求める。
 
@@ -375,17 +406,38 @@ def _build_panels(
     panels: list[PortPanel] = []
     for key in keys:
         members = sorted(chassis[key], key=_sort_key)
-        main = [e for e in members if categories[e[0].if_index] == PHYSICAL]
-        sfp = [e for e in members if categories[e[0].if_index] == UPLINK]
+        physical = [e for e in members if categories[e[0].if_index] == PHYSICAL]
+        uplink = [e for e in members if categories[e[0].if_index] == UPLINK]
 
         sections: list[PanelSection] = []
-        if main:
+        if physical:
+            # Catalyst 3850 の Gi1/0/N (本体) と Gi1/1/N (ネットワークモジュール) の
+            # ように、同じ筐体でもスロットが違えば別の区画にする。
+            # ポート数が最も多いスロットを本体とみなす。
+            groups = sorted(
+                _group_by_slot(physical).items(), key=lambda kv: (-len(kv[1]), kv[0])
+            )
+            _, main = groups[0]
             rows = _default_rows(len(main), layout.rows if layout else None)
             order = layout.order if layout else "odd-top"
             sections.append(PanelSection("main", _layout_rows(main, rows, order)))
-        if sfp:
-            rows = 2 if len(sfp) >= 4 else 1
-            sections.append(PanelSection("sfp", _layout_rows(sfp, rows, "odd-top")))
+            for unit, group in sorted(groups[1:], key=lambda kv: kv[0]):
+                sections.append(
+                    PanelSection(
+                        "module", _layout_rows(group, _small_rows(group), "odd-top"),
+                        slot=_slot_number(unit),
+                    )
+                )
+        if uplink:
+            groups = sorted(_group_by_slot(uplink).items(), key=lambda kv: kv[0])
+            for unit, group in groups:
+                sections.append(
+                    PanelSection(
+                        "sfp", _layout_rows(group, _small_rows(group), "odd-top"),
+                        # スロットが 1 つだけなら番号は出さない
+                        slot=_slot_number(unit) if len(groups) > 1 else None,
+                    )
+                )
         if sections:
             panels.append(
                 PortPanel(

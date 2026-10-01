@@ -66,7 +66,7 @@ class FakeClient:
         if keys == set(oids.INTERFACE_INVENTORY_COLUMNS):
             return {
                 index: {
-                    "descr": f"eth{index}".encode(),
+                    "descr": port.get("descr", f"eth{index}").encode(),
                     "if_type": port.get("if_type", 6),
                     "mtu": 1500,
                     "speed": min(port.get("speed", 1_000_000_000), 4_294_967_295),
@@ -171,4 +171,36 @@ def cisco_switch_device(port_count: int = 8, units: int = 1) -> FakeDevice:
             "name": name, "speed": 1_000_000_000, "if_type": if_type,
         }
         index += 1
+    return device
+
+
+def catalyst_3850_device() -> FakeDevice:
+    """Catalyst 3850 (48 ポート) の SNMP 上の見え方を再現する。
+
+    ネットワークモジュールの 1G (Gi1/1/N) と 10G (Te1/1/N) が最初から両方
+    定義されているのが特徴。ifName は短縮形、ifDescr は正式名になる。
+    """
+    device = FakeDevice()
+    device.ports = {}
+
+    def add(index, name, descr, *, speed=1_000_000_000, if_type=6):
+        device.ports[str(index)] = {
+            "oper": 1, "in": 0, "out": 0, "errors": 0,
+            "name": name, "descr": descr, "speed": speed, "if_type": if_type,
+        }
+
+    add(1, "Gi0/0", "GigabitEthernet0/0")
+    for n in range(1, 49):
+        add(100 + n, f"Gi1/0/{n}", f"GigabitEthernet1/0/{n}")
+    for n in range(1, 5):
+        add(200 + n, f"Gi1/1/{n}", f"GigabitEthernet1/1/{n}")
+    for n in range(1, 5):
+        add(300 + n, f"Te1/1/{n}", f"TenGigabitEthernet1/1/{n}", speed=10_000_000_000)
+    add(400, "Vl1", "Vlan1", if_type=53)
+    for offset, vlan in enumerate((1, 1002, 1003, 1004, 1005)):
+        add(410 + offset, f"VLAN-{vlan}", f"VLAN-{vlan}", if_type=53)
+    add(420, "StackPort1", "StackPort1", if_type=53)
+    add(421, "StackSub-St1-1", "StackSub-St1-1", if_type=53)
+    add(422, "StackSub-St1-2", "StackSub-St1-2", if_type=53)
+    add(430, "Nu0", "Null0", if_type=1)
     return device
